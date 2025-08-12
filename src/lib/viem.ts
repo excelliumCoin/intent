@@ -1,10 +1,18 @@
-// lib/viem.ts
 import { createPublicClient, createWalletClient, custom, defineChain } from 'viem';
 
-async function detectChain() {
-  const eth = (window as any).ethereum;
+// Minimal EIP-1193 provider typing (avoid `any`)
+type EthRequestArgs = { method: string; params?: unknown[] };
+type Eip1193Provider = { request(args: EthRequestArgs): Promise<unknown> };
+
+function getProvider(): Eip1193Provider {
+  const g = globalThis as unknown as { ethereum?: Eip1193Provider };
+  const eth = g.ethereum;
   if (!eth) throw new Error('No wallet');
-  const idHex: string = await eth.request({ method: 'eth_chainId' });
+  return eth;
+}
+
+async function detectChain(eth: Eip1193Provider) {
+  const idHex = (await eth.request({ method: 'eth_chainId' })) as string;
   const id = parseInt(idHex, 16);
   return defineChain({
     id,
@@ -15,22 +23,22 @@ async function detectChain() {
 }
 
 export async function getWalletClient() {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error('No wallet');
-  const chain = await detectChain();
-  return createWalletClient({ chain, transport: custom(eth) });
+  const eth = getProvider();
+  const chain = await detectChain(eth);
+  // cast via `unknown` to keep strict typing without `any`
+  const transport = custom(eth as unknown as { request(a: EthRequestArgs): Promise<unknown> });
+  return createWalletClient({ chain, transport });
 }
 
 export async function getPublicClient() {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error('No wallet');
-  const chain = await detectChain();
-  return createPublicClient({ chain, transport: custom(eth) });
+  const eth = getProvider();
+  const chain = await detectChain(eth);
+  const transport = custom(eth as unknown as { request(a: EthRequestArgs): Promise<unknown> });
+  return createPublicClient({ chain, transport });
 }
 
 export async function getChainId(): Promise<number> {
-  const eth = (window as any).ethereum;
-  if (!eth) throw new Error('No wallet');
-  const idHex: string = await eth.request({ method: 'eth_chainId' });
+  const eth = getProvider();
+  const idHex = (await eth.request({ method: 'eth_chainId' })) as string;
   return parseInt(idHex, 16);
 }
