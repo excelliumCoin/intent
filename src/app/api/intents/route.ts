@@ -11,27 +11,61 @@ export async function GET() {
   return NextResponse.json(pool);
 }
 
-export async function POST(req: NextRequest) {
-  const body = await req.json();
+type BodyGiveGet = Intent["give"] | Intent["get"];
+type Payload = ReturnType<typeof buildSignPayload>;
 
-  if (!body?.give || !body?.get || !body?.signature || !body?.payload) {
+export async function POST(req: NextRequest) {
+  const body = (await req.json()) as Record<string, unknown>;
+
+  // basic shape checks (no `any`)
+  if (
+    typeof body.signature !== "string" ||
+    typeof body.payload !== "object" ||
+    body.payload === null ||
+    typeof body.give !== "object" ||
+    body.give === null ||
+    typeof body.get !== "object" ||
+    body.get === null
+  ) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 });
   }
 
+  const payloadObj = body.payload as Record<string, unknown>;
+
   const rebuilt = buildSignPayload({
-    maker: String(body.payload.maker),
-    give: body.payload.give,
-    get: body.payload.get,
-    constraints: body.payload.constraints,
-    nonce: String(body.payload.nonce),
+    maker: String(payloadObj.maker ?? ""),
+    give: body.give as BodyGiveGet as Intent["give"],
+    get: body.get as BodyGiveGet as Intent["get"],
+    constraints: payloadObj.constraints as Intent["constraints"] | undefined,
+    nonce: String(payloadObj.nonce ?? ""),
   });
   const message = toMessage(rebuilt);
 
   let recovered: `0x${string}`;
   try {
-    recovered = await recoverMessageAddress({ message, signature: body.signature });
+    recovered = await recoverMessageAddress({
+      message,
+      signature: body.signature as `0x${string}`,
+    });
   } catch {
     return NextResponse.json({ error: "Bad signature" }, { status: 400 });
   }
 
-  if (recovered.toLowerCase() !== String(body.payload.
+  const makerFromPayload = String(payloadObj.maker ?? "");
+  if (recovered.toLowerCase() !== makerFromPayload.toLowerCase()) {
+    return NextResponse.json({ error: "Signer mismatch" }, { status: 400 });
+  }
+
+  const intent: Intent = {
+    id: uuid(),
+    createdAt: new Date().toISOString(),
+    maker: recovered,
+    give: rebuilt.give,
+    get: rebuilt.get,
+    constraints: rebuilt.constraints,
+    signature: body.signature as string,
+  };
+
+  pool.push(intent);
+  return NextResponse.json(intent, { status: 201 });
+}
