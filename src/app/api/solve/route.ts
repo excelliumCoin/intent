@@ -4,12 +4,15 @@ import type { Intent, Match } from "@/types/intent";
 
 export const runtime = "nodejs";
 
-// global history (memory)
-const gg = globalThis as any;
-gg.__MATCHES__ = gg.__MATCHES__ || [];
-const matchesHistory: Match[] = gg.__MATCHES__;
+declare global {
+  // eslint-disable-next-line no-var
+  var __MATCHES__: Match[] | undefined;
+}
 
-function compatible(a: Intent, b: Intent) {
+const matchesHistory: Match[] =
+  globalThis.__MATCHES__ ?? (globalThis.__MATCHES__ = []);
+
+function compatible(a: Intent, b: Intent): boolean {
   const assetCross =
     a.give.asset.symbol === b.get.asset.symbol &&
     a.get.asset.symbol === b.give.asset.symbol &&
@@ -24,9 +27,10 @@ function compatible(a: Intent, b: Intent) {
     (!b.constraints?.priceLimit || priceB <= b.constraints.priceLimit);
 
   const now = Date.now();
-  const notExpired = [a, b].every(x =>
-    !x.constraints?.deadline || Date.parse(x.constraints.deadline) > now
+  const notExpired = [a, b].every(
+    (x) => !x.constraints?.deadline || Date.parse(x.constraints.deadline) > now
   );
+
   return priceOk && notExpired;
 }
 
@@ -39,7 +43,10 @@ export async function POST() {
         const match: Match = {
           intentA: A,
           intentB: B,
-          clearingPrice: (A.give.amountMax / A.get.amountMin + B.give.amountMax / B.get.amountMin) / 2,
+          clearingPrice:
+            (A.give.amountMax / A.get.amountMin +
+              B.give.amountMax / B.get.amountMin) /
+            2,
           createdAt: new Date().toISOString(),
         };
         pool.splice(j, 1);
