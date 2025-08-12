@@ -1,9 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type InputHTMLAttributes,
+} from 'react';
 import { buildSignPayload, toMessage } from '@/lib/signing';
 import { getPublicClient, getWalletClient, getChainId } from '@/lib/viem';
-import { ERC20_ABI, ESCROW_ABI, UNIV2_PAIR_ABI, ERC20_PERMIT_ABI } from '@/lib/abi';
+import {
+  ERC20_ABI,
+  ESCROW_ABI,
+  UNIV2_PAIR_ABI,
+  ERC20_PERMIT_ABI,
+} from '@/lib/abi';
 import { parseUnits } from 'viem';
 
 type Asset = { chain: string; symbol: string };
@@ -25,15 +36,20 @@ type Match = {
   createdAt: string;
 };
 
+// Minimal EIP-1193 provider typing (avoid `any`)
+type EthRequestArgs = { method: string; params?: unknown[] };
+type Eip1193Provider = { request(args: EthRequestArgs): Promise<unknown> };
+type WithEthereum = Window & { ethereum?: Eip1193Provider };
+
 export default function Page() {
   // ---------- INTENT FORM ----------
   const [account, setAccount] = useState<string | null>(null);
   const [giveSymbol, setGiveSymbol] = useState('USDC');
   const [giveChain, setGiveChain] = useState('Ethereum');
-  const [giveAmount, setGiveAmount] = useState(2000);
+  const [giveAmount, setGiveAmount] = useState<number | string>(2000);
   const [getSymbol, setGetSymbol] = useState('ETH');
   const [getChain, setGetChain] = useState('Ethereum');
-  const [getAmount, setGetAmount] = useState(1);
+  const [getAmount, setGetAmount] = useState<number | string>(1);
   const [priceLimit, setPriceLimit] = useState<number | ''>('');
   const [deadline, setDeadline] = useState<string>('');
 
@@ -47,34 +63,33 @@ export default function Page() {
     []
   );
   const [escrowAddress, setEscrowAddress] = useState<string>(initialEscrow);
-  const [tokenA, setTokenA] = useState<string>(''); // ERC-20 address (maker A gives)
-  const [tokenB, setTokenB] = useState<string>(''); // ERC-20 address (maker B gives)
-  const [amountAUi, setAmountAUi] = useState<string>(''); // human format (e.g., 2000)
-  const [amountBUi, setAmountBUi] = useState<string>(''); // human format (e.g., 1)
+  const [tokenA, setTokenA] = useState<string>(''); // ERC-20 address
+  const [tokenB, setTokenB] = useState<string>(''); // ERC-20 address
+  const [amountAUi, setAmountAUi] = useState<string>(''); // human format
+  const [amountBUi, setAmountBUi] = useState<string>(''); // human format
 
   // Price oracle & readiness
-  const [pairAddress, setPairAddress] = useState<string>('');  // Uniswap V2 pair
-  const [refPrice, setRefPrice] = useState<string>('');        // tokenA/tokenB ref price
+  const [pairAddress, setPairAddress] = useState<string>(''); // Uniswap V2 pair
+  const [refPrice, setRefPrice] = useState<string>(''); // tokenA/tokenB
   const [priceOk, setPriceOk] = useState<boolean | null>(null);
   const [allowAok, setAllowAok] = useState<boolean | null>(null);
   const [allowBok, setAllowBok] = useState<boolean | null>(null);
 
   // Permit settings
-  const [permitDeadlineMin, setPermitDeadlineMin] = useState<number>(20); // now + 20 min
+  const [permitDeadlineMin, setPermitDeadlineMin] = useState<number>(20);
 
   // History
   const [matches, setMatches] = useState<Match[]>([]);
 
   // ---------- WALLET ----------
   async function connect() {
-    const eth = (window as any).ethereum;
+    const eth = (window as WithEthereum).ethereum;
     if (!eth) {
       alert('No wallet found');
       return;
     }
-    const accs = await eth.request({ method: 'eth_requestAccounts' });
-    const a = accs[0];
-    setAccount(a);
+    const accs = (await eth.request({ method: 'eth_requestAccounts' })) as string[];
+    setAccount(accs[0] ?? null);
   }
 
   // ---------- API ----------
@@ -82,17 +97,19 @@ export default function Page() {
     const res = await fetch('/api/intents');
     setIntents(await res.json());
   }
-
   async function fetchMatches() {
     const res = await fetch('/api/matches');
     setMatches(await res.json());
   }
-
-  useEffect(() => { loadIntents(); }, []);
-  useEffect(() => { fetchMatches(); }, []);
+  useEffect(() => {
+    loadIntents();
+  }, []);
+  useEffect(() => {
+    fetchMatches();
+  }, []);
 
   // ---------- UI HELPERS ----------
-  const input = (props: any) => (
+  const input = (props: InputHTMLAttributes<HTMLInputElement>) => (
     <input
       {...props}
       style={{
@@ -113,12 +130,14 @@ export default function Page() {
   async function postIntent() {
     setBusy(true);
     try {
-      const eth = (window as any).ethereum;
+      const eth = (window as WithEthereum).ethereum;
       if (!eth) throw new Error('No wallet');
-      const from = account || (await eth.request({ method: 'eth_requestAccounts' }))[0];
+      const from =
+        account ??
+        ((await eth.request({ method: 'eth_requestAccounts' })) as string[])[0];
 
       const draft = {
-        maker: from,
+        maker: from as string,
         give: {
           asset: { chain: giveChain, symbol: giveSymbol },
           amountMax: Number(giveAmount),
@@ -159,14 +178,16 @@ export default function Page() {
     setBusy(true);
     try {
       const res = await fetch('/api/solve', { method: 'POST' });
-      const data = await res.json();
-      setLastMatch(data?.intentA ? data : null);
+      const data = (await res.json()) as Match | { status: string };
+      const isMatch = (data as Match).intentA !== undefined;
+      setLastMatch(isMatch ? (data as Match) : null);
       await loadIntents();
       await fetchMatches();
 
-      if (data?.intentA && data?.intentB) {
-        setAmountAUi(String(data.intentA.give.amountMax));
-        setAmountBUi(String(data.intentB.give.amountMax));
+      if (isMatch) {
+        const m = data as Match;
+        setAmountAUi(String(m.intentA.give.amountMax));
+        setAmountBUi(String(m.intentB.give.amountMax));
       }
     } finally {
       setBusy(false);
@@ -184,13 +205,18 @@ export default function Page() {
     return dec;
   }
 
-  async function approveToken(token: string, spender: string, humanAmount: string) {
+  async function approveToken(
+    token: string,
+    spender: string,
+    humanAmount: string
+  ) {
     if (!token || !spender) throw new Error('Token or spender missing');
-
     const wc = await getWalletClient();
     const pc = await getPublicClient();
-    const eth = (window as any).ethereum;
-    const from: string = (await eth.request({ method: 'eth_requestAccounts' }))[0];
+    const eth = (window as WithEthereum).ethereum!;
+    const from = ((await eth.request({
+      method: 'eth_requestAccounts',
+    })) as string[])[0] as `0x${string}`;
 
     const dec = await erc20Decimals(token);
     const value = parseUnits(humanAmount, dec);
@@ -200,7 +226,7 @@ export default function Page() {
       abi: ERC20_ABI,
       functionName: 'approve',
       args: [spender as `0x${string}`, value],
-      account: from as `0x${string}`,
+      account: from,
     });
     await pc.waitForTransactionReceipt({ hash });
     return hash;
@@ -215,16 +241,18 @@ export default function Page() {
     amountBUi: string;
   }) {
     if (!escrowAddress) throw new Error('Set escrow address');
-
     const wc = await getWalletClient();
     const pc = await getPublicClient();
+
     const decA = await erc20Decimals(params.tokenA);
     const decB = await erc20Decimals(params.tokenB);
     const amountA = parseUnits(params.amountAUi, decA);
     const amountB = parseUnits(params.amountBUi, decB);
 
-    const eth = (window as any).ethereum;
-    const from: string = (await eth.request({ method: 'eth_requestAccounts' }))[0];
+    const eth = (window as WithEthereum).ethereum!;
+    const from = ((await eth.request({
+      method: 'eth_requestAccounts',
+    })) as string[])[0] as `0x${string}`;
 
     const hash = await wc.writeContract({
       address: escrowAddress as `0x${string}`,
@@ -238,45 +266,52 @@ export default function Page() {
         amountA,
         amountB,
       ],
-      account: from as `0x${string}`,
+      account: from,
     });
     await pc.waitForTransactionReceipt({ hash });
     return hash;
   }
 
   // ---------- ORACLE & ALLOWANCE ----------
+  type Reserves = readonly [bigint, bigint, number];
+
   async function detectBaseIsToken0(pair: string, baseTokenAddr: string) {
     const pc = await getPublicClient();
-    const t0 = await pc.readContract({
+    const t0 = (await pc.readContract({
       address: pair as `0x${string}`,
       abi: UNIV2_PAIR_ABI,
-      functionName: 'token0'
-    }) as `0x${string}`;
+      functionName: 'token0',
+    })) as `0x${string}`;
     return t0.toLowerCase() === baseTokenAddr.toLowerCase();
   }
 
   async function readU2Price(pair: string, baseIsToken0: boolean) {
     const pc = await getPublicClient();
-    const [r0, r1] = await pc.readContract({
+    const [r0, r1] = (await pc.readContract({
       address: pair as `0x${string}`,
       abi: UNIV2_PAIR_ABI,
-      functionName: 'getReserves'
-    }) as unknown as [bigint, bigint, number];
+      functionName: 'getReserves',
+    })) as Reserves;
     const price = baseIsToken0 ? Number(r1) / Number(r0) : Number(r0) / Number(r1);
     return price;
   }
 
-  async function checkAllowance(token: string, owner: string, spender: string, humanAmount: string) {
+  async function checkAllowance(
+    token: string,
+    owner: string,
+    spender: string,
+    humanAmount: string
+  ) {
     if (!token || !spender || !owner || !humanAmount) return false;
     const pc = await getPublicClient();
     const dec = await erc20Decimals(token);
     const need = parseUnits(humanAmount, dec);
-    const allowance = await pc.readContract({
+    const allowance = (await pc.readContract({
       address: token as `0x${string}`,
       abi: ERC20_ABI,
       functionName: 'allowance',
-      args: [owner as `0x${string}`, spender as `0x${string}`]
-    }) as bigint;
+      args: [owner as `0x${string}`, spender as `0x${string}`],
+    })) as bigint;
     return allowance >= need;
   }
 
@@ -293,18 +328,43 @@ export default function Page() {
     setPriceOk(pOk);
 
     // 2) Allowances (for each maker)
-    const aOk = await checkAllowance(tokenA, lastMatch?.intentA.maker ?? '', escrowAddress, amountAUi);
-    const bOk = await checkAllowance(tokenB, lastMatch?.intentB.maker ?? '', escrowAddress, amountBUi);
+    const aOk = await checkAllowance(
+      tokenA,
+      lastMatch?.intentA.maker ?? '',
+      escrowAddress,
+      amountAUi
+    );
+    const bOk = await checkAllowance(
+      tokenB,
+      lastMatch?.intentB.maker ?? '',
+      escrowAddress,
+      amountBUi
+    );
     setAllowAok(aOk);
     setAllowBok(bOk);
   }
 
   // ---------- EIP-2612 PERMIT ----------
-  async function getPermitTypedData(token: string, owner: string, spender: string, humanAmount: string, deadlineTs: number) {
+  async function getPermitTypedData(
+    token: string,
+    owner: string,
+    spender: string,
+    humanAmount: string,
+    deadlineTs: number
+  ) {
     const pc = await getPublicClient();
     const [nonce, name] = await Promise.all([
-      pc.readContract({ address: token as `0x${string}`, abi: ERC20_PERMIT_ABI, functionName: 'nonces', args: [owner as `0x${string}`] }) as Promise<bigint>,
-      pc.readContract({ address: token as `0x${string}`, abi: ERC20_PERMIT_ABI, functionName: 'name' }) as Promise<string>,
+      pc.readContract({
+        address: token as `0x${string}`,
+        abi: ERC20_PERMIT_ABI,
+        functionName: 'nonces',
+        args: [owner as `0x${string}`],
+      }) as Promise<bigint>,
+      pc.readContract({
+        address: token as `0x${string}`,
+        abi: ERC20_PERMIT_ABI,
+        functionName: 'name',
+      }) as Promise<string>,
     ]);
     const chainId = await getChainId();
     const dec = await erc20Decimals(token);
@@ -338,13 +398,25 @@ export default function Page() {
     return { domain, types, message };
   }
 
-  async function submitPermit(token: string, owner: string, spender: string, humanAmount: string, deadlineMinutes = 20) {
+  async function submitPermit(
+    token: string,
+    owner: string,
+    spender: string,
+    humanAmount: string,
+    deadlineMinutes = 20
+  ) {
     if (!token || !owner || !spender) throw new Error('Missing permit params');
     const wc = await getWalletClient();
     const pc = await getPublicClient();
 
     const deadlineTs = Math.floor(Date.now() / 1000) + deadlineMinutes * 60;
-    const { domain, types, message } = await getPermitTypedData(token, owner, spender, humanAmount, deadlineTs);
+    const { domain, types, message } = await getPermitTypedData(
+      token,
+      owner,
+      spender,
+      humanAmount,
+      deadlineTs
+    );
 
     const signature = await wc.signTypedData({
       domain,
@@ -402,43 +474,69 @@ export default function Page() {
             </button>
           </div>
 
-          {/* Give */}
           {label('Give Symbol')}
-          {input({ value: giveSymbol, onChange: (e: any) => setGiveSymbol(e.target.value) })}
+          {input({
+            value: giveSymbol,
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGiveSymbol(e.target.value),
+          })}
           <div style={{ height: 8 }} />
           {label('Give Chain')}
-          {input({ value: giveChain, onChange: (e: any) => setGiveChain(e.target.value) })}
+          {input({
+            value: giveChain,
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGiveChain(e.target.value),
+          })}
           <div style={{ height: 8 }} />
           {label('Amount Max')}
           {input({
             type: 'number',
             value: giveAmount,
-            onChange: (e: any) => setGiveAmount(e.target.value),
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGiveAmount(e.target.value),
           })}
 
           <div style={{ height: 12 }} />
 
-          {/* Get */}
           {label('Get Symbol')}
-          {input({ value: getSymbol, onChange: (e: any) => setGetSymbol(e.target.value) })}
+          {input({
+            value: getSymbol,
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGetSymbol(e.target.value),
+          })}
           <div style={{ height: 8 }} />
           {label('Get Chain')}
-          {input({ value: getChain, onChange: (e: any) => setGetChain(e.target.value) })}
+          {input({
+            value: getChain,
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGetChain(e.target.value),
+          })}
           <div style={{ height: 8 }} />
           {label('Amount Min')}
           {input({
             type: 'number',
             value: getAmount,
-            onChange: (e: any) => setGetAmount(e.target.value),
+            onChange: (e: ChangeEvent<HTMLInputElement>) =>
+              setGetAmount(e.target.value),
           })}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 8,
+              marginTop: 12,
+            }}
+          >
             <div>
               {label('Price Limit (optional)')}
               {input({
                 type: 'number',
                 value: priceLimit,
-                onChange: (e: any) => setPriceLimit(e.target.value),
+                onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                  setPriceLimit(
+                    e.target.value === '' ? '' : Number(e.target.value)
+                  ),
               })}
             </div>
             <div>
@@ -446,7 +544,8 @@ export default function Page() {
               {input({
                 placeholder: '2025-12-31T23:59:00Z',
                 value: deadline,
-                onChange: (e: any) => setDeadline(e.target.value),
+                onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                  setDeadline(e.target.value),
               })}
             </div>
           </div>
@@ -485,7 +584,9 @@ export default function Page() {
         <div>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Intent Pool</div>
           <div style={{ display: 'grid', gap: 8 }}>
-            {intents.length === 0 && <div style={{ opacity: 0.7 }}>No intents yet.</div>}
+            {intents.length === 0 && (
+              <div style={{ opacity: 0.7 }}>No intents yet.</div>
+            )}
             {intents.map((it) => (
               <div
                 key={it.id}
@@ -500,8 +601,9 @@ export default function Page() {
                   {it.maker.slice(0, 6)}…{it.maker.slice(-4)}
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
-                  Give {it.give.amountMax} {it.give.asset.symbol} on {it.give.asset.chain} → Get{' '}
-                  {it.get.amountMin} {it.get.asset.symbol} on {it.get.asset.chain}
+                  Give {it.give.amountMax} {it.give.asset.symbol} on{' '}
+                  {it.give.asset.chain} → Get {it.get.amountMin}{' '}
+                  {it.get.asset.symbol} on {it.get.asset.chain}
                 </div>
                 {it.constraints?.priceLimit && (
                   <div style={{ fontSize: 12, opacity: 0.7 }}>
@@ -518,7 +620,9 @@ export default function Page() {
           </div>
 
           <div style={{ fontWeight: 600, marginTop: 16 }}>Last Match</div>
-          {!lastMatch && <div style={{ opacity: 0.7 }}>No match yet. Click Solve.</div>}
+          {!lastMatch && (
+            <div style={{ opacity: 0.7 }}>No match yet. Click Solve.</div>
+          )}
           {lastMatch && (
             <div
               style={{
@@ -530,8 +634,10 @@ export default function Page() {
               }}
             >
               <div style={{ fontSize: 13, opacity: 0.85 }}>
-                {lastMatch.intentA.maker.slice(0, 6)}…{lastMatch.intentA.maker.slice(-4)} ↔{' '}
-                {lastMatch.intentB.maker.slice(0, 6)}…{lastMatch.intentB.maker.slice(-4)}
+                {lastMatch.intentA.maker.slice(0, 6)}…
+                {lastMatch.intentA.maker.slice(-4)} ↔{' '}
+                {lastMatch.intentB.maker.slice(0, 6)}…
+                {lastMatch.intentB.maker.slice(-4)}
               </div>
               <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
                 Clearing Price: {lastMatch.clearingPrice?.toFixed(6)}
@@ -556,13 +662,16 @@ export default function Page() {
               On-chain Settlement (Escrow)
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div
+              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}
+            >
               <div>
                 {label('Escrow Address')}
                 {input({
                   placeholder: '0x...',
                   value: escrowAddress,
-                  onChange: (e: any) => setEscrowAddress(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setEscrowAddress(e.target.value),
                 })}
               </div>
               <div />
@@ -571,7 +680,8 @@ export default function Page() {
                 {input({
                   placeholder: '0x... (e.g., USDC-ETH pair)',
                   value: pairAddress,
-                  onChange: (e: any) => setPairAddress(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setPairAddress(e.target.value),
                 })}
               </div>
               <div />
@@ -580,7 +690,8 @@ export default function Page() {
                 {input({
                   placeholder: '0x... (token provided by maker A)',
                   value: tokenA,
-                  onChange: (e: any) => setTokenA(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setTokenA(e.target.value),
                 })}
               </div>
               <div>
@@ -588,7 +699,8 @@ export default function Page() {
                 {input({
                   placeholder: '0x... (token provided by maker B)',
                   value: tokenB,
-                  onChange: (e: any) => setTokenB(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setTokenB(e.target.value),
                 })}
               </div>
               <div>
@@ -596,7 +708,8 @@ export default function Page() {
                 {input({
                   placeholder: 'e.g., 2000',
                   value: amountAUi,
-                  onChange: (e: any) => setAmountAUi(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setAmountAUi(e.target.value),
                 })}
               </div>
               <div>
@@ -604,48 +717,64 @@ export default function Page() {
                 {input({
                   placeholder: 'e.g., 1',
                   value: amountBUi,
-                  onChange: (e: any) => setAmountBUi(e.target.value),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setAmountBUi(e.target.value),
                 })}
               </div>
             </div>
 
-            {/* Readiness */}
-            <div style={{ display:'flex', gap:8, marginTop:12, flexWrap:'wrap' }}>
+            <div
+              style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}
+            >
               <button
                 onClick={checkReadiness}
-                disabled={!escrowAddress || !tokenA || !tokenB || !amountAUi || !amountBUi || busy}
-                style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #344', background:'#0b2239', color:'#cde' }}
+                disabled={
+                  !escrowAddress || !tokenA || !tokenB || !amountAUi || !amountBUi || busy
+                }
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #344',
+                  background: '#0b2239',
+                  color: '#cde',
+                }}
               >
                 Check Readiness (Price & Allowance)
               </button>
               {priceOk !== null && (
-                <div style={{ alignSelf:'center', fontSize:12, opacity:.85 }}>
-                  Price check: {priceOk ? 'OK' : '⚠️ Mismatch'} {refPrice && `(ref: ${refPrice})`}
+                <div style={{ alignSelf: 'center', fontSize: 12, opacity: 0.85 }}>
+                  Price check: {priceOk ? 'OK' : '⚠️ Mismatch'}{' '}
+                  {refPrice && `(ref: ${refPrice})`}
                 </div>
               )}
               {allowAok !== null && allowBok !== null && (
-                <div style={{ alignSelf:'center', fontSize:12, opacity:.85 }}>
-                  Allowance A: {allowAok ? 'OK' : 'Approve/Permit needed'} | Allowance B: {allowBok ? 'OK' : 'Approve/Permit needed'}
+                <div style={{ alignSelf: 'center', fontSize: 12, opacity: 0.85 }}>
+                  Allowance A: {allowAok ? 'OK' : 'Approve/Permit needed'} | Allowance
+                  B: {allowBok ? 'OK' : 'Approve/Permit needed'}
                 </div>
               )}
             </div>
 
-            {/* Permit quick settings */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:12 }}>
+            {/* Permit settings */}
+            <div
+              style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 12 }}
+            >
               <div>
                 {label('Permit Deadline (minutes)')}
                 {input({
                   type: 'number',
                   value: permitDeadlineMin,
-                  onChange: (e: any) => setPermitDeadlineMin(Number(e.target.value || 0)),
+                  onChange: (e: ChangeEvent<HTMLInputElement>) =>
+                    setPermitDeadlineMin(Number(e.target.value || 0)),
                 })}
               </div>
               <div />
             </div>
 
             {/* Approve / Permit / Settle Buttons */}
-            <div style={{ display:'flex', gap:8, marginTop:12, flexWrap:'wrap' }}>
-              {/* Approves */}
+            <div
+              style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}
+            >
               <button
                 disabled={!tokenA || !escrowAddress || busy}
                 onClick={() => approveToken(tokenA, escrowAddress, amountAUi)}
@@ -673,10 +802,11 @@ export default function Page() {
                 Approve Token B
               </button>
 
-              {/* Permits (EIP-2612) */}
               <button
                 disabled={!account || !tokenA || !escrowAddress || busy}
-                onClick={() => submitPermit(tokenA, account!, escrowAddress, amountAUi, permitDeadlineMin)}
+                onClick={() =>
+                  submitPermit(tokenA, account!, escrowAddress, amountAUi, permitDeadlineMin)
+                }
                 style={{
                   padding: '10px 14px',
                   borderRadius: 10,
@@ -689,7 +819,9 @@ export default function Page() {
               </button>
               <button
                 disabled={!account || !tokenB || !escrowAddress || busy}
-                onClick={() => submitPermit(tokenB, account!, escrowAddress, amountBUi, permitDeadlineMin)}
+                onClick={() =>
+                  submitPermit(tokenB, account!, escrowAddress, amountBUi, permitDeadlineMin)
+                }
                 style={{
                   padding: '10px 14px',
                   borderRadius: 10,
@@ -701,7 +833,6 @@ export default function Page() {
                 Permit Token B (EIP-2612)
               </button>
 
-              {/* Settle */}
               <button
                 disabled={!lastMatch || !tokenA || !tokenB || !escrowAddress || busy}
                 onClick={() =>
@@ -726,7 +857,16 @@ export default function Page() {
               </button>
 
               <button
-                disabled={!lastMatch || !tokenA || !tokenB || !escrowAddress || busy || allowAok !== true || allowBok !== true || (priceOk === false)}
+                disabled={
+                  !lastMatch ||
+                  !tokenA ||
+                  !tokenB ||
+                  !escrowAddress ||
+                  busy ||
+                  allowAok !== true ||
+                  allowBok !== true ||
+                  priceOk === false
+                }
                 onClick={() =>
                   settleAtomicCall({
                     tokenA,
@@ -750,23 +890,36 @@ export default function Page() {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>
-              Note: Permit (EIP-2612) lets you authorize allowances with a signed message and a single on-chain tx.
-              Not all tokens support it—if it fails, use <i>Approve</i> instead. For tokens with fewer decimals (e.g., USDC with 6),
-              enter amounts in human format (e.g., 2000 or 1.5); the app converts to base units.
+              Note: Permit (EIP-2612) allows setting allowances via signature + single tx.
+              If a token does not support it, use <i>Approve</i>. For tokens with fewer
+              decimals (e.g., USDC with 6), enter human-readable amounts; the app converts.
             </div>
           </div>
 
           {/* Match History */}
           <div style={{ fontWeight: 600, marginTop: 16 }}>Match History</div>
-          {matches.length === 0 && <div style={{ opacity:.7 }}>No past matches.</div>}
-          <div style={{ display:'grid', gap:8, marginTop:8 }}>
+          {matches.length === 0 && <div style={{ opacity: 0.7 }}>No past matches.</div>}
+          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
             {matches.map((m, i) => (
-              <div key={i} style={{ border:'1px solid #1b2850', borderRadius:12, padding:12, background:'#0e1630' }}>
-                <div style={{ fontSize:12, opacity:.75 }}>{new Date(m.createdAt).toLocaleString()}</div>
-                <div style={{ fontSize:13, opacity:.85, marginTop:4 }}>
-                  {m.intentA.maker.slice(0,6)}…{m.intentA.maker.slice(-4)} ↔ {m.intentB.maker.slice(0,6)}…{m.intentB.maker.slice(-4)}
+              <div
+                key={i}
+                style={{
+                  border: '1px solid #1b2850',
+                  borderRadius: 12,
+                  padding: 12,
+                  background: '#0e1630',
+                }}
+              >
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  {new Date(m.createdAt).toLocaleString()}
                 </div>
-                <div style={{ fontSize:12, opacity:.75 }}>Clearing: {m.clearingPrice?.toFixed(6)}</div>
+                <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
+                  {m.intentA.maker.slice(0, 6)}…{m.intentA.maker.slice(-4)} ↔{' '}
+                  {m.intentB.maker.slice(0, 6)}…{m.intentB.maker.slice(-4)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  Clearing: {m.clearingPrice?.toFixed(6)}
+                </div>
               </div>
             ))}
           </div>
